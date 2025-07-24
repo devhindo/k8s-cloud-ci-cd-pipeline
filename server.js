@@ -1,41 +1,36 @@
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 3000; // to allow external port configuration
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(express.json());
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString() 
-  });
-});
-
-// Main API endpoint
-app.get('/api/hello', (req, res) => {
-  res.json({ 
-    message: 'Hello Eyego',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Root endpoint
+// Main API endpoint - returns Hello Eyego
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Hello Eyego App is running!',
-    endpoints: {
-      hello: '/api/hello',
-      health: '/health'
-    }
-  });
+  res.send('Hello Eyego');
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
+// Health check endpoint (required for Kubernetes)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Start server (only if not in test environment)
+let server;
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  if (server) {
+    server.close(() => process.exit(0));
+  }
+});
+
+process.on('SIGINT', () => {
+  if (server) {
+    server.close(() => process.exit(0));
+  }
 });
 
 module.exports = app;

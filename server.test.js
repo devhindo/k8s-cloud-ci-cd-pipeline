@@ -1,18 +1,13 @@
 const request = require('supertest');
 const app = require('./server');
 
+process.env.NODE_ENV = 'test';
+
 describe('Hello Eyego App', () => {
-  test('GET / should return app info', async () => {
+  test('GET / should return Hello Eyego', async () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);
-    expect(response.body.message).toBe('Hello Eyego App is running!');
-  });
-
-  test('GET /api/hello should return Hello Eyego', async () => {
-    const response = await request(app).get('/api/hello');
-    expect(response.status).toBe(200);
-    expect(response.body.message).toBe('Hello Eyego');
-    expect(response.body.version).toBe('1.0.0');
+    expect(response.text).toBe('Hello Eyego');
   });
 
   test('GET /health should return health status', async () => {
