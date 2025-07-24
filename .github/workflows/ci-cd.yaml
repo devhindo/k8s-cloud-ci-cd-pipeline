@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -15,32 +15,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
       with:
         node-version: '20'
         cache: 'npm'
+    - run: npm ci
+    - run: npm test
 
-    - name: Install dependencies
-      run: npm ci
-
-    - name: Run tests
-      run: npm test
-
-  build-and-push:
+  build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    outputs:
-      image-tag: ${{ steps.build-image.outputs.image-tag }}
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
+    - uses: actions/checkout@v4
+    
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -52,67 +42,23 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build and push Docker image
-      id: build-image
+    - name: Build, push and deploy
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Build Docker image
+        # Build and push Docker image
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-        
-        # Push images to ECR
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         
-        echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    environment: production
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
-      with:
-        version: 'v1.28.0'
-
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
-
-    - name: Update deployment image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
-      run: |
-        # Update the deployment.yaml with new image
+        # Setup kubectl
+        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
+        chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+        
+        # Update kubeconfig
+        aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+        
+        # Update deployment with new image and deploy
         sed -i "s|image: hello-eyego:latest|image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" k8s/deployment.yaml
-        
-        # Apply Kubernetes manifests
-        kubectl apply -f k8s/namespace.yaml
-        kubectl apply -f k8s/deployment.yaml
-        kubectl apply -f k8s/service.yaml
-        kubectl apply -f k8s/ingress.yaml
-        
-        # Wait for deployment to be ready
+        kubectl apply -f k8s/
         kubectl rollout status deployment/hello-eyego-deployment -n hello-eyego
-        
-        # Get service info
-        kubectl get services -n hello-eyego
